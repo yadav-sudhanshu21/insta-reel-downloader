@@ -1,21 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Download,
-  Film,
-  Image as ImageIcon,
   Sparkles,
-  Check,
-  Copy,
-  ExternalLink,
   AlertCircle,
   Loader2,
-  ArrowRight,
   Trash2,
   ChevronRight,
   ClipboardPaste,
-  Music,
-  Settings2,
-  X
+  RotateCcw,
+  Play,
+  Check
 } from 'lucide-react';
 
 // ==========================================
@@ -25,10 +19,15 @@ function parseInstagramUrl(input) {
   if (!input) return null;
   const trimmed = input.trim();
 
-  // Match standard Instagram URLs: /reel/, /reels/, /p/, /tv/
+  // Extract Instagram link even if pasted with caption text around it
+  const urlMatch = trimmed.match(
+    /(https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am)\/[^\s]+)/i
+  );
+  const candidate = urlMatch ? urlMatch[1] : trimmed;
+
   const regex =
     /(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am|vxinstagram\.com)\/(?:[A-Za-z0-9_.]+\/)?(reel|reels|p|tv)\/([A-Za-z0-9_-]{5,25})/i;
-  const match = trimmed.match(regex);
+  const match = candidate.match(regex);
   if (match) {
     const rawType = match[1].toLowerCase();
     return {
@@ -38,100 +37,7 @@ function parseInstagramUrl(input) {
     };
   }
 
-  // Fallback if user pasted just the shortcode
-  if (/^[A-Za-z0-9_-]{8,15}$/.test(trimmed)) {
-    return {
-      type: 'reel',
-      shortcode: trimmed,
-      cleanUrl: `https://www.instagram.com/reel/${trimmed}/`
-    };
-  }
-
   return null;
-}
-
-// Build multi-quality list from a direct Instagram video or image CDN URL
-function buildInstagramQualities(mediaUrl, mediaType, index = 0, width = 1080, height = 1920) {
-  if (!mediaUrl) return [];
-
-  if (mediaType === 'video') {
-    const baseAspect = width && height ? `${width}x${height}` : '1080x1920';
-    return [
-      {
-        id: `ig-vid-${index}-1080p`,
-        label: '1080p Full HD Reel',
-        resolution: baseAspect,
-        bitrate: '6,800 kbps',
-        ext: 'MP4',
-        sizeEst: 'Original Master',
-        badge: 'MAX BITRATE',
-        url: mediaUrl
-      },
-      {
-        id: `ig-vid-${index}-720p`,
-        label: '720p HD Stream',
-        resolution: '720x1280',
-        bitrate: '3,400 kbps',
-        ext: 'MP4',
-        sizeEst: 'High Definition',
-        badge: 'HD',
-        url: mediaUrl
-      },
-      {
-        id: `ig-vid-${index}-480p`,
-        label: '480p Standard MP4',
-        resolution: '480x854',
-        bitrate: '1,500 kbps',
-        ext: 'MP4',
-        sizeEst: 'Fast Save',
-        badge: null,
-        url: mediaUrl
-      },
-      {
-        id: `ig-aud-${index}-m4a`,
-        label: 'Original Reel Audio',
-        resolution: 'AAC Stereo',
-        bitrate: '256 kbps',
-        ext: 'M4A',
-        sizeEst: 'Audio Track',
-        badge: 'AUDIO',
-        url: mediaUrl
-      }
-    ];
-  }
-
-  return [
-    {
-      id: `ig-img-${index}-orig`,
-      label: 'ORIG (Uncompressed 4K/1080p)',
-      resolution: width && height ? `${width}x${height}` : '1080x1350',
-      bitrate: null,
-      ext: 'JPG',
-      sizeEst: 'Lossless Master',
-      badge: 'LOSSLESS ORIG',
-      url: mediaUrl
-    },
-    {
-      id: `ig-img-${index}-large`,
-      label: 'LARGE (High-Res 1080px)',
-      resolution: '1080px Max',
-      bitrate: null,
-      ext: 'JPG',
-      sizeEst: 'High Quality',
-      badge: 'HD',
-      url: mediaUrl
-    },
-    {
-      id: `ig-img-${index}-medium`,
-      label: 'MEDIUM (750px Standard)',
-      resolution: '750px Max',
-      bitrate: null,
-      ext: 'JPG',
-      sizeEst: 'Standard Web',
-      badge: null,
-      url: mediaUrl
-    }
-  ];
 }
 
 export default function App() {
@@ -140,26 +46,31 @@ export default function App() {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-  const [downloadingId, setDownloadingId] = useState(null);
+  const [downloadingServer, setDownloadingServer] = useState(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [copiedId, setCopiedId] = useState(null);
   const [activeNav, setActiveNav] = useState('Reels HD');
   const [history, setHistory] = useState([]);
-  const [showApiModal, setShowApiModal] = useState(false);
-  const [customRapidApiKey, setCustomRapidApiKey] = useState('');
 
   const extractorRef = useRef(null);
+  const resultSectionRef = useRef(null);
   const howItWorksRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Load saved history and dynamically inject btch-downloader browser bundle for client-side fallback
   useEffect(() => {
     try {
-      const savedHistory = localStorage.getItem('instavault_history_v1');
+      const savedHistory = localStorage.getItem('instavault_history_v2');
       if (savedHistory) setHistory(JSON.parse(savedHistory));
-      const savedKey = localStorage.getItem('instavault_rapidapi_key');
-      if (savedKey) setCustomRapidApiKey(savedKey);
     } catch (e) {
-      // ignore localStorage errors
+      // ignore
+    }
+
+    if (!document.getElementById('btch-sdk-script')) {
+      const script = document.createElement('script');
+      script.id = 'btch-sdk-script';
+      script.src = 'https://cdn.jsdelivr.net/npm/btch-downloader@6.4.0/dist/browser/index.min.js';
+      script.async = true;
+      document.body.appendChild(script);
     }
   }, []);
 
@@ -167,7 +78,7 @@ export default function App() {
     try {
       setHistory((prev) => {
         const updated = [item, ...prev.filter((h) => h.shortcode !== item.shortcode)].slice(0, 6);
-        localStorage.setItem('instavault_history_v1', JSON.stringify(updated));
+        localStorage.setItem('instavault_history_v2', JSON.stringify(updated));
         return updated;
       });
     } catch (e) {
@@ -176,12 +87,12 @@ export default function App() {
   };
 
   // ==========================================
-  // LIVE MULTI-NODE INSTAGRAM EXTRACTION ENGINE
+  // MULTI-SERVER INSTAGRAM EXTRACTION ENGINE
   // ==========================================
   const fetchLiveInstagramMedia = async (parsed) => {
     const { shortcode, type, cleanUrl } = parsed;
 
-    // 1. PRIMARY ENGINE: Call Your Own Vercel Serverless Backend (/api/instagram)
+    // 1. PRIMARY ENGINE: Call Your Vercel Backend (/api/instagram)
     try {
       const apiRes = await fetch(
         `/api/instagram?shortcode=${encodeURIComponent(shortcode)}&type=${encodeURIComponent(type)}`
@@ -191,20 +102,16 @@ export default function App() {
         if (data && data.status === 'ok' && Array.isArray(data.items) && data.items.length > 0) {
           const mediaItems = data.items.map((item, idx) => {
             const isVid = item.type === 'video';
-            const streamUrl = isVid ? item.videoUrl : item.imageUrl;
+            const primaryStream = isVid ? item.videoUrl : item.imageUrl;
+            const secondaryStream = item.server2Url || primaryStream;
             return {
               index: idx,
               type: isVid ? 'video' : 'photo',
               isEmbedFallback: false,
-              thumbnail: item.thumbnail || streamUrl,
-              previewUrl: streamUrl,
-              qualities: buildInstagramQualities(
-                streamUrl,
-                isVid ? 'video' : 'photo',
-                idx,
-                item.width,
-                item.height
-              )
+              thumbnail: item.thumbnail || primaryStream,
+              previewUrl: primaryStream,
+              server1Url: primaryStream,
+              server2Url: secondaryStream
             };
           });
 
@@ -212,84 +119,50 @@ export default function App() {
             shortcode,
             postType: mediaItems.length > 1 ? 'CAROUSEL' : type.toUpperCase(),
             authorName: data.authorName || `@${data.authorHandle}`,
-            authorHandle: data.authorHandle || 'instagram_creator',
-            authorAvatar:
-              data.authorAvatar ||
-              mediaItems[0]?.thumbnail ||
-              'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120&auto=format&fit=crop&q=80',
+            authorHandle: data.authorHandle || 'instagram',
             caption: data.caption || `Instagram ${type.toUpperCase()} (#${shortcode})`,
             mediaItems
           };
         }
       }
     } catch (e) {
-      // Fallback to client-side extraction nodes if /api/instagram is not reachable locally
+      // Continue to Engine 2
     }
 
-    // 2. Optional RapidAPI Commercial Node (if user configured an API key in Settings)
-    if (customRapidApiKey && customRapidApiKey.trim().length > 10) {
-      try {
-        const rapidRes = await fetch(
-          `https://instagram-scraper-api2.p.rapidapi.com/v1/post_info?code_or_id_or_url=${encodeURIComponent(
-            cleanUrl
-          )}`,
-          {
-            headers: {
-              'x-rapidapi-key': customRapidApiKey.trim(),
-              'x-rapidapi-host': 'instagram-scraper-api2.p.rapidapi.com'
-            }
-          }
-        );
+    // 2. ENGINE 2: Client-Side btch-downloader SDK (if loaded in browser)
+    try {
+      const btch = window.btch || window.btchDownloader;
+      if (btch && typeof btch.igdl === 'function') {
+        const res = await btch.igdl(cleanUrl);
+        const list = Array.isArray(res) ? res : res?.result || res?.data || [];
+        if (Array.isArray(list) && list.length > 0 && list[0]?.url) {
+          const mediaItems = list.map((item, idx) => ({
+            index: idx,
+            type: 'video',
+            isEmbedFallback: false,
+            thumbnail: item.thumbnail || item.wm || item.url,
+            previewUrl: item.url,
+            server1Url: item.url,
+            server2Url: list[1]?.url || item.url
+          }));
 
-        if (rapidRes.ok) {
-          const rJson = await rapidRes.json();
-          const d = rJson?.data;
-          if (d) {
-            const mediaItems = [];
-            const carousel = d.carousel_media || [d];
-            carousel.forEach((item, idx) => {
-              const videoUrl = item.video_url || item.video_versions?.[0]?.url;
-              const imageUrl =
-                item.thumbnail_url || item.image_versions2?.candidates?.[0]?.url;
-              const isVid = Boolean(videoUrl);
-              mediaItems.push({
-                index: idx,
-                type: isVid ? 'video' : 'photo',
-                isEmbedFallback: false,
-                thumbnail: imageUrl || videoUrl,
-                previewUrl: isVid ? videoUrl : imageUrl,
-                qualities: buildInstagramQualities(
-                  isVid ? videoUrl : imageUrl,
-                  isVid ? 'video' : 'photo',
-                  idx
-                )
-              });
-            });
-
-            if (mediaItems.length > 0) {
-              return {
-                shortcode,
-                postType: type.toUpperCase(),
-                authorName: d.user?.full_name || d.user?.username || 'Instagram Creator',
-                authorHandle: d.user?.username || 'instagram',
-                authorAvatar:
-                  d.user?.profile_pic_url ||
-                  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120&auto=format&fit=crop&q=80',
-                caption: d.caption?.text || `Instagram ${type.toUpperCase()} (#${shortcode})`,
-                mediaItems
-              };
-            }
-          }
+          return {
+            shortcode,
+            postType: type.toUpperCase(),
+            authorName: 'Instagram Reel',
+            authorHandle: 'instagram',
+            caption: `Instagram ${type.toUpperCase()} (#${shortcode})`,
+            mediaItems
+          };
         }
-      } catch (e) {
-        // Continue to next engine
       }
+    } catch (e) {
+      // Continue to Engine 3
     }
 
-    // 3. Multi-Proxy Extraction across Instagram Captioned Embed & Unfurl Services
+    // 3. ENGINE 3: Direct Browser Proxies to Embed Captioned & Unfurl Nodes
     const embedCaptionedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
     const kkUrl = `https://kkinstagram.com/reel/${shortcode}`;
-    const ezUrl = `https://www.instagramez.com/reel/${shortcode}`;
 
     const fetchTextWithTimeout = async (url, timeoutMs = 6500) => {
       const controller = new AbortController();
@@ -305,17 +178,11 @@ export default function App() {
       }
     };
 
-    const proxyPromises = [
+    const responses = await Promise.allSettled([
       fetchTextWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(embedCaptionedUrl)}`),
       fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(embedCaptionedUrl)}`),
-      fetchTextWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(kkUrl)}`),
-      fetchTextWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(ezUrl)}`)
-    ];
-
-    const responses = await Promise.allSettled(proxyPromises);
-    const htmlPayloads = responses
-      .filter((r) => r.status === 'fulfilled' && r.value && r.value.length > 200)
-      .map((r) => r.value);
+      fetchTextWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(kkUrl)}`)
+    ]);
 
     const decodeEscapes = (str) =>
       str
@@ -325,154 +192,67 @@ export default function App() {
         .replace(/&amp;/g, '&');
 
     let fallbackThumbnail = null;
-    let fallbackHandle = 'instagram_creator';
+    let fallbackHandle = 'instagram';
 
-    for (const html of htmlPayloads) {
-      const videoMatches = [];
-      const imageMatches = [];
+    for (const r of responses) {
+      if (r.status !== 'fulfilled' || !r.value) continue;
+      const html = r.value;
+      const videos = [];
+      const images = [];
 
-      for (const m of html.matchAll(/"video_url"\s*:\s*"([^"]+)"/g)) {
-        videoMatches.push(decodeEscapes(m[1]));
-      }
       for (const m of html.matchAll(/\\?"video_url\\?"\s*:\s*\\?"([^"\\]+)\\?"/g)) {
-        videoMatches.push(decodeEscapes(m[1]));
+        videos.push(decodeEscapes(m[1]));
       }
-      for (const m of html.matchAll(/"display_url"\s*:\s*"([^"]+)"/g)) {
-        imageMatches.push(decodeEscapes(m[1]));
+      for (const m of html.matchAll(/"video_url"\s*:\s*"([^"]+)"/g)) {
+        videos.push(decodeEscapes(m[1]));
       }
-      for (const m of html.matchAll(/\\?"display_url\\?"\s*:\s*\\?"([^"\\]+)\\?"/g)) {
-        imageMatches.push(decodeEscapes(m[1]));
-      }
-
       const ogVideo =
         html.match(/property="og:video(?::secure_url)?"\s+content="([^"]+)"/i) ||
-        html.match(/content="([^"]+)"\s+property="og:video(?::secure_url)?"/i) ||
-        html.match(/name="twitter:player:stream"\s+content="([^"]+)"/i);
-      if (ogVideo?.[1]) {
-        const rawVid = decodeEscapes(ogVideo[1]);
-        if (rawVid.startsWith('http')) videoMatches.push(rawVid);
-      }
+        html.match(/content="([^"]+)"\s+property="og:video(?::secure_url)?"/i);
+      if (ogVideo?.[1]) videos.push(decodeEscapes(ogVideo[1]));
 
-      const ogImage =
-        html.match(/property="og:image"\s+content="([^"]+)"/i) ||
-        html.match(/content="([^"]+)"\s+property="og:image"/i);
-      if (ogImage?.[1]) {
-        const rawImg = decodeEscapes(ogImage[1]);
-        if (rawImg.startsWith('http')) imageMatches.push(rawImg);
+      for (const m of html.matchAll(/\\?"display_url\\?"\s*:\s*\\?"([^"\\]+)\\?"/g)) {
+        images.push(decodeEscapes(m[1]));
       }
-
       const embedImgMatch = html.match(/class="EmbeddedMediaImage"[^>]+src="([^"]+)"/);
-      if (embedImgMatch?.[1]) {
-        imageMatches.push(decodeEscapes(embedImgMatch[1]));
-      }
+      if (embedImgMatch?.[1]) images.push(decodeEscapes(embedImgMatch[1]));
 
-      const usernameMatch =
-        html.match(/"username":"([^"]+)"/) ||
+      const userMatch =
         html.match(/\\?"username\\?"\s*:\s*\\?"([^"\\]+)\\?"/) ||
         html.match(/class="UsernameText"[^>]*>([^<]+)</);
-      if (usernameMatch) {
-        fallbackHandle = usernameMatch[1].trim();
-      }
+      if (userMatch) fallbackHandle = userMatch[1].trim();
 
-      const uniqueVideos = [...new Set(videoMatches)].filter((u) => u.startsWith('http'));
-      const uniqueImages = [...new Set(imageMatches)].filter((u) => u.startsWith('http'));
+      const uniqueVideos = [...new Set(videos)].filter((u) => u.startsWith('http'));
+      const uniqueImages = [...new Set(images)].filter((u) => u.startsWith('http'));
 
       if (uniqueImages.length > 0 && !fallbackThumbnail) {
         fallbackThumbnail = uniqueImages[0];
       }
 
-      // Return immediately if we got a real MP4 video (or if it's a photo post)
       if (uniqueVideos.length > 0 || (type === 'p' && uniqueImages.length > 0)) {
-        const mediaItems = [];
-        if (uniqueVideos.length > 0) {
-          uniqueVideos.forEach((vUrl, idx) => {
-            mediaItems.push({
-              index: idx,
-              type: 'video',
-              isEmbedFallback: false,
-              thumbnail: uniqueImages[idx] || uniqueImages[0] || vUrl,
-              previewUrl: vUrl,
-              qualities: buildInstagramQualities(vUrl, 'video', idx)
-            });
-          });
-        } else {
-          uniqueImages.forEach((imgUrl, idx) => {
-            mediaItems.push({
-              index: idx,
-              type: 'photo',
-              isEmbedFallback: false,
-              thumbnail: imgUrl,
-              previewUrl: imgUrl,
-              qualities: buildInstagramQualities(imgUrl, 'photo', idx)
-            });
-          });
-        }
-
+        const primaryUrl = uniqueVideos[0] || uniqueImages[0];
         return {
           shortcode,
-          postType: mediaItems.length > 1 ? 'CAROUSEL' : type.toUpperCase(),
+          postType: type.toUpperCase(),
           authorName: `@${fallbackHandle}`,
           authorHandle: fallbackHandle,
-          authorAvatar:
-            uniqueImages[0] ||
-            'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120&auto=format&fit=crop&q=80',
-          caption: `Instagram ${type.toUpperCase()} (#${shortcode}) — Ready for download`,
-          mediaItems
+          caption: `Instagram ${type.toUpperCase()} (#${shortcode})`,
+          mediaItems: [
+            {
+              index: 0,
+              type: uniqueVideos.length > 0 ? 'video' : 'photo',
+              isEmbedFallback: false,
+              thumbnail: uniqueImages[0] || primaryUrl,
+              previewUrl: primaryUrl,
+              server1Url: primaryUrl,
+              server2Url: uniqueVideos[1] || primaryUrl
+            }
+          ]
         };
       }
     }
 
-    // 4. Resilient Live Player + Direct High-Speed Mirror Fallback
-    const liveStreamMirror = `https://d.rapidcdn.app/d?url=${encodeURIComponent(cleanUrl)}`;
-    const qualities = [
-      {
-        id: `ig-vid-${shortcode}-1080p`,
-        label: '1080p Full HD Reel (MP4)',
-        resolution: '1080x1920',
-        bitrate: '6,800 kbps',
-        ext: 'MP4',
-        sizeEst: 'Original Master',
-        badge: 'MAX BITRATE',
-        url: fallbackThumbnail || `https://www.instagram.com/reel/${shortcode}/`
-      }
-    ];
-
-    if (fallbackThumbnail) {
-      qualities.push({
-        id: `ig-img-${shortcode}-orig`,
-        label: 'Original High-Res Cover / Photo (JPG)',
-        resolution: '1080x1920',
-        bitrate: null,
-        ext: 'JPG',
-        sizeEst: 'Lossless Master',
-        badge: 'ORIG PHOTO',
-        url: fallbackThumbnail
-      });
-    }
-
-    return {
-      shortcode,
-      postType: type.toUpperCase(),
-      authorName: `@${fallbackHandle}`,
-      authorHandle: fallbackHandle,
-      authorAvatar:
-        fallbackThumbnail ||
-        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120&auto=format&fit=crop&q=80',
-      caption: `Instagram ${type.toUpperCase()} (#${shortcode}) — Live Stream Ready`,
-      mediaItems: [
-        {
-          index: 0,
-          type: 'video',
-          isEmbedFallback: true,
-          embedIframeUrl: `https://www.instagram.com/p/${shortcode}/embed/`,
-          thumbnail:
-            fallbackThumbnail ||
-            'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80',
-          previewUrl: liveStreamMirror,
-          qualities
-        }
-      ]
-    };
+    throw new Error('Could not extract this link. Please make sure the Instagram Reel is public and try again.');
   };
 
   const handleExtract = async (e, customUrl) => {
@@ -482,9 +262,7 @@ export default function App() {
 
     const parsed = parseInstagramUrl(targetUrl);
     if (!parsed) {
-      setError(
-        'Please paste a valid Instagram Reel, Video, or Post link (e.g. https://www.instagram.com/reel/...)'
-      );
+      setError('Please paste a valid Instagram Reel or Video link (e.g. https://www.instagram.com/reel/...)');
       return;
     }
 
@@ -494,13 +272,25 @@ export default function App() {
       setResult(data);
       setActiveSlideIndex(0);
       saveToHistory(data);
+      setUrlInput(''); // Auto-clear input once ready, just like fastvideosave.net
+      setTimeout(() => {
+        resultSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 150);
     } catch (err) {
-      setError(
-        err.message ||
-          'Unable to fetch this Instagram post. Ensure the Reel or Post is public.'
-      );
+      setError(err.message || "Couldn't download this link. Make sure the Reel is public.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Auto-submit immediately when user pastes a valid Instagram URL (fastvideosave.net behavior)
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setUrlInput(val);
+    setError('');
+    const parsed = parseInstagramUrl(val);
+    if (parsed && val.length > 24 && !loading) {
+      handleExtract(null, val);
     }
   };
 
@@ -520,31 +310,48 @@ export default function App() {
     }
   };
 
-  const handleDownloadFile = async (qualityItem) => {
-    setDownloadingId(qualityItem.id);
-    setDownloadProgress(20);
+  // ==========================================================
+  // SERVER 1 & SERVER 2 DIRECT DOWNLOAD HANDLERS
+  // ==========================================================
+  const handleServerDownload = async (targetStreamUrl, serverNumber) => {
+    if (!targetStreamUrl) return;
+    setDownloadingServer(serverNumber);
+    setDownloadProgress(25);
 
-    const cleanFileName = `FreeInstaVideo_${result?.authorHandle || 'reel'}_${
-      result?.shortcode || 'media'
-    }.${qualityItem.ext.toLowerCase()}`;
+    const ext = currentMedia?.type === 'photo' ? 'jpg' : 'mp4';
+    const cleanFileName = `Instagram_Reel_${result?.shortcode || 'video'}_Server${serverNumber}.${ext}`;
 
+    // SERVER 2: Direct CDN Stream / Proxy Download Endpoint (Instant Browser File Save)
+    if (serverNumber === 2) {
+      const directProxyHref = `/api/instagram?downloadUrl=${encodeURIComponent(
+        targetStreamUrl
+      )}&filename=${encodeURIComponent(cleanFileName)}`;
+      const a = document.createElement('a');
+      a.href = directProxyHref;
+      a.download = cleanFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      setTimeout(() => {
+        setDownloadingServer(null);
+        setDownloadProgress(0);
+      }, 800);
+      return;
+    }
+
+    // SERVER 1: Fetch Binary Stream & Save Directly into Device Gallery / Downloads
     try {
-      // 1. First try downloading via our own Vercel Serverless Proxy (/api/instagram?downloadUrl=...)
-      // This bypasses browser CORS and forces an instant file save
       const proxyDownloadUrl = `/api/instagram?downloadUrl=${encodeURIComponent(
-        qualityItem.url
+        targetStreamUrl
       )}&filename=${encodeURIComponent(cleanFileName)}`;
 
       let response = await fetch(proxyDownloadUrl);
-
-      // If /api/instagram isn't deployed locally, try corsproxy
       if (!response.ok || response.headers.get('content-type')?.includes('text/html')) {
-        response = await fetch(
-          `https://corsproxy.io/?${encodeURIComponent(qualityItem.url)}`
-        );
+        response = await fetch(targetStreamUrl);
       }
 
-      if (!response || !response.ok) throw new Error('Fallback to native stream');
+      if (!response || !response.ok) throw new Error('Direct link fallback');
 
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
@@ -565,14 +372,9 @@ export default function App() {
         }
       }
 
-      const mimeType =
-        qualityItem.ext === 'MP4'
-          ? 'video/mp4'
-          : qualityItem.ext === 'M4A'
-          ? 'audio/mp4'
-          : 'image/jpeg';
-
-      const blob = new Blob(chunks, { type: mimeType });
+      const blob = new Blob(chunks, {
+        type: ext === 'mp4' ? 'video/mp4' : 'image/jpeg'
+      });
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
@@ -583,27 +385,19 @@ export default function App() {
       URL.revokeObjectURL(blobUrl);
       setDownloadProgress(100);
     } catch (err) {
-      window.open(qualityItem.url, '_blank', 'noopener,noreferrer');
+      // Fallback to direct download anchor
+      window.open(
+        `/api/instagram?downloadUrl=${encodeURIComponent(targetStreamUrl)}&filename=${encodeURIComponent(
+          cleanFileName
+        )}`,
+        '_blank',
+        'noopener,noreferrer'
+      );
     } finally {
       setTimeout(() => {
-        setDownloadingId(null);
+        setDownloadingServer(null);
         setDownloadProgress(0);
       }, 600);
-    }
-  };
-
-  const handleCopyLink = (qualityItem) => {
-    navigator.clipboard.writeText(qualityItem.url);
-    setCopiedId(qualityItem.id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const saveApiKey = (val) => {
-    setCustomRapidApiKey(val);
-    try {
-      localStorage.setItem('instavault_rapidapi_key', val);
-    } catch (e) {
-      // ignore
     }
   };
 
@@ -615,7 +409,7 @@ export default function App() {
       {/* ================================================================= */}
       {/* HERO SECTION WITH FERNWOOD DOT MATRIX + SAND BEIGE HORIZON MIST   */}
       {/* ================================================================= */}
-      <section className="relative min-h-[90vh] flex flex-col justify-between overflow-hidden">
+      <section className="relative min-h-[84vh] flex flex-col justify-between overflow-hidden">
         {/* Subtle Dot Matrix Pattern Overlay */}
         <div
           className="pointer-events-none absolute inset-0 opacity-25"
@@ -642,7 +436,6 @@ export default function App() {
 
         {/* TOP NAVIGATION BAR */}
         <header className="relative z-20 max-w-7xl w-full mx-auto px-6 pt-7 flex items-center justify-between">
-          {/* Left: Brand Identity */}
           <a
             href="#top"
             onClick={(e) => {
@@ -661,7 +454,6 @@ export default function App() {
             </span>
           </a>
 
-          {/* Center: Floating Pill Navigation */}
           <nav className="hidden md:flex items-center gap-1 p-1.5 rounded-full bg-[#2E523B]/80 backdrop-blur-md border border-[#E8DCC4]/15 shadow-lg">
             {['Reels HD', 'Videos', 'Photos 4K', 'Carousels', 'How it works'].map((item) => {
               const active = activeNav === item;
@@ -689,96 +481,73 @@ export default function App() {
             })}
           </nav>
 
-          {/* Right: Clean Paste & Optional API Settings */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handlePasteClipboard}
-              className="px-4 py-2 rounded-full text-xs font-medium border border-[#E8DCC4]/30 bg-[#1F3D2B]/60 hover:border-[#8B5CF6] hover:bg-[#8B5CF6]/20 text-[#E8DCC4] transition flex items-center gap-1.5 cursor-pointer"
-            >
-              <ClipboardPaste className="w-3.5 h-3.5 text-[#8B5CF6]" />
-              <span>Paste Link</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowApiModal(true)}
-              title="API Node Settings"
-              className="p-2 rounded-full border border-[#E8DCC4]/20 bg-[#1F3D2B]/50 hover:border-[#8B5CF6] text-[#E8DCC4]/75 hover:text-[#E8DCC4] transition cursor-pointer"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handlePasteClipboard}
+            className="px-4 py-2 rounded-full text-xs font-medium border border-[#E8DCC4]/30 bg-[#1F3D2B]/60 hover:border-[#8B5CF6] hover:bg-[#8B5CF6]/20 text-[#E8DCC4] transition flex items-center gap-1.5 cursor-pointer"
+          >
+            <ClipboardPaste className="w-3.5 h-3.5 text-[#8B5CF6]" />
+            <span>Paste link</span>
+          </button>
         </header>
 
         {/* CENTER HERO CONTENT */}
         <div
           ref={extractorRef}
-          className="relative z-20 max-w-4xl w-full mx-auto px-6 pt-16 pb-32 text-center flex flex-col items-center"
+          className="relative z-20 max-w-4xl w-full mx-auto px-6 pt-14 pb-28 text-center flex flex-col items-center"
         >
-          {/* Main Display Headline */}
           <h1 className="text-4xl sm:text-6xl md:text-[64px] font-bold tracking-tight text-[#E8DCC4] leading-[1.08] max-w-3xl">
             Instagram Reel Download.
           </h1>
 
-          {/* Concise Subtitle */}
           <p className="mt-5 text-base sm:text-lg text-[#E8DCC4]/85 max-w-xl leading-relaxed font-normal">
             Download high quality insta reels and videos with one click
           </p>
 
-          {/* URL INPUT COMMAND PILL */}
+          {/* FASTVIDEOSAVE-STYLE AUTO-SUBMIT INPUT BAR */}
           <form
             onSubmit={(e) => handleExtract(e)}
-            className="mt-9 w-full max-w-2xl bg-[#162D1F]/90 backdrop-blur-md border border-[#E8DCC4]/25 focus-within:border-[#8B5CF6] rounded-full p-2 flex items-center shadow-2xl transition-all"
+            className={`mt-9 w-full max-w-2xl bg-[#162D1F]/95 backdrop-blur-md border ${
+              error ? 'border-red-400' : 'border-[#E8DCC4]/25 focus-within:border-[#8B5CF6]'
+            } rounded-full p-2 flex items-center shadow-2xl transition-all`}
           >
             <input
               ref={inputRef}
               type="text"
               value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="Paste Instagram Reel or Post link — https://www.instagram.com/reel/..."
+              onChange={handleInputChange}
+              placeholder="Paste link here..."
               className="w-full bg-transparent px-5 py-2.5 text-sm text-[#E8DCC4] placeholder-[#E8DCC4]/45 focus:outline-none"
             />
-            {urlInput ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setUrlInput('');
-                  setError('');
-                }}
-                className="px-3 text-xs text-[#E8DCC4]/55 hover:text-[#E8DCC4] transition cursor-pointer"
-              >
-                Clear
-              </button>
+
+            {loading ? (
+              <div className="shrink-0 px-6 py-3 rounded-full bg-[#8B5CF6] text-white font-semibold text-xs sm:text-sm flex items-center gap-2 shadow-md">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Loading...</span>
+              </div>
             ) : (
               <button
                 type="button"
-                onClick={handlePasteClipboard}
-                className="hidden sm:flex items-center gap-1 px-3.5 py-1.5 mr-1 rounded-full text-xs text-[#E8DCC4]/75 hover:text-[#E8DCC4] bg-[#E8DCC4]/10 hover:bg-[#E8DCC4]/15 transition cursor-pointer shrink-0"
+                onClick={() => {
+                  if (urlInput.trim()) {
+                    handleExtract(null, urlInput);
+                  } else {
+                    handlePasteClipboard();
+                  }
+                }}
+                className="shrink-0 px-6 py-2.5 rounded-full bg-[#E8DCC4] hover:bg-white text-[#1F3D2B] transition flex items-center gap-2.5 shadow-md cursor-pointer"
               >
-                <ClipboardPaste className="w-3 h-3 text-[#8B5CF6]" />
-                <span>Paste</span>
+                <ClipboardPaste className="w-4 h-4 text-[#8B5CF6]" />
+                <div className="text-left leading-tight">
+                  <div className="font-bold text-xs sm:text-sm">
+                    {urlInput.trim() ? 'Download Reel' : 'Paste link'}
+                  </div>
+                  <div className="text-[10px] text-[#1F3D2B]/70 font-medium">auto-submit</div>
+                </div>
               </button>
             )}
-            <button
-              type="submit"
-              disabled={loading}
-              className="shrink-0 px-6 py-3 rounded-full bg-[#E8DCC4] hover:bg-[#f3ead8] text-[#1F3D2B] font-semibold text-xs sm:text-sm tracking-tight transition flex items-center gap-2 shadow-md cursor-pointer disabled:opacity-60"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-[#8B5CF6]" />
-                  <span>Extracting...</span>
-                </>
-              ) : (
-                <>
-                  <span>Download Reel</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                </>
-              )}
-            </button>
           </form>
 
-          {/* Error Banner */}
           {error && (
             <div className="mt-5 max-w-xl w-full px-5 py-3 rounded-2xl bg-[#162D1F]/95 border border-[#8B5CF6]/60 text-[#E8DCC4] text-xs flex items-center justify-center gap-2.5 shadow-lg">
               <AlertCircle className="w-4 h-4 text-[#8B5CF6] shrink-0" />
@@ -787,226 +556,115 @@ export default function App() {
           )}
         </div>
 
-        <div className="h-6" />
+        <div className="h-4" />
       </section>
 
       {/* ================================================================= */}
-      {/* SAND BEIGE SURFACE SECTION: RESULTS + HOW IT WORKS                */}
+      {/* SAND BEIGE SURFACE SECTION: FASTVIDEOSAVE-STYLE RESULT CARD       */}
       {/* ================================================================= */}
       <main className="bg-[#E8DCC4] text-[#1F3D2B] relative z-20 pb-24 pt-4">
-        <div className="max-w-5xl mx-auto px-6">
-          {/* EXTRACTED MEDIA CARD */}
-          {result && (
-            <div className="-mt-20 mb-16 rounded-3xl bg-[#1F3D2B] text-[#E8DCC4] border border-[#1F3D2B] shadow-2xl overflow-hidden">
-              {/* Post Author Header */}
-              <div className="px-6 py-5 border-b border-[#E8DCC4]/12 flex flex-wrap items-center justify-between gap-4 bg-[#193223]">
-                <div className="flex items-center gap-3.5">
-                  <img
-                    src={result.authorAvatar}
-                    alt={result.authorName}
-                    className="w-11 h-11 rounded-full object-cover border border-[#8B5CF6]/50 bg-[#1F3D2B]"
-                    onError={(e) => {
-                      e.target.src =
-                        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120&auto=format&fit=crop&q=80';
-                    }}
-                  />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-bold text-sm text-[#E8DCC4]">{result.authorName}</h3>
-                      <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-[#8B5CF6]/20 text-[#E8DCC4] border border-[#8B5CF6]/40">
-                        @{result.authorHandle} · Instagram {result.postType}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[#E8DCC4]/70 line-clamp-1 mt-0.5 max-w-xl">
-                      {result.caption}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Carousel Slide Switcher */}
+        <div ref={resultSectionRef} className="max-w-5xl mx-auto px-6">
+          {/* CENTERED VERTICAL VIDEO CARD WITH SERVER 1 & SERVER 2 BUTTONS (EXACT REFERENCE MATCH) */}
+          {result && currentMedia && (
+            <div className="-mt-20 mb-16 flex justify-center">
+              <div className="w-full max-w-[380px] rounded-3xl bg-[#1F3D2B] text-[#E8DCC4] p-5 shadow-2xl border border-[#E8DCC4]/20 flex flex-col items-center">
+                {/* Carousel Switcher if multiple slides */}
                 {result.mediaItems.length > 1 && (
-                  <div className="flex items-center gap-1.5 bg-[#1F3D2B] p-1 rounded-full border border-[#E8DCC4]/15">
+                  <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
                     {result.mediaItems.map((m, idx) => (
                       <button
                         key={m.index}
                         onClick={() => setActiveSlideIndex(idx)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium transition cursor-pointer ${
+                        className={`px-3 py-1 rounded-full text-xs font-semibold transition cursor-pointer ${
                           activeSlideIndex === idx
                             ? 'bg-[#8B5CF6] text-white'
-                            : 'text-[#E8DCC4]/70 hover:text-[#E8DCC4]'
+                            : 'bg-[#E8DCC4]/10 text-[#E8DCC4]/75 hover:text-[#E8DCC4]'
                         }`}
                       >
-                        Slide #{idx + 1}
+                        #{idx + 1}
                       </button>
                     ))}
                   </div>
                 )}
-              </div>
 
-              {/* Media Preview + Quality Download List */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-0">
-                {/* Left Column: Live Reel / Photo Preview */}
-                <div className="lg:col-span-5 bg-[#14291D] p-6 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-[#E8DCC4]/10">
-                  <div className="relative rounded-2xl overflow-hidden bg-black/50 border border-[#E8DCC4]/15 aspect-[9/12] max-h-[420px] flex items-center justify-center mx-auto w-full">
-                    {currentMedia?.isEmbedFallback ? (
-                      <iframe
-                        src={currentMedia.embedIframeUrl}
-                        title="Instagram Reel Preview"
-                        className="w-full h-full bg-white border-0"
-                        allowTransparency="true"
-                        allow="encrypted-media"
-                      />
-                    ) : currentMedia?.type === 'video' ? (
-                      <video
-                        key={currentMedia.previewUrl}
-                        src={currentMedia.previewUrl}
-                        poster={currentMedia.thumbnail}
-                        controls
-                        playsInline
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <img
-                        src={currentMedia?.previewUrl}
-                        alt="Instagram media preview"
-                        className="w-full h-full object-contain"
-                      />
-                    )}
-
-                    <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-[#1F3D2B]/90 backdrop-blur-md border border-[#E8DCC4]/20 text-[11px] font-semibold text-[#E8DCC4] flex items-center gap-1.5 pointer-events-none">
-                      {currentMedia?.type === 'photo' ? (
-                        <>
-                          <ImageIcon className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                          <span>INSTAGRAM PHOTO</span>
-                        </>
-                      ) : (
-                        <>
-                          <Film className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                          <span>INSTAGRAM REEL</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between text-xs text-[#E8DCC4]/65 pt-2">
-                    <span>Shortcode: #{result.shortcode}</span>
-                    <span>{currentMedia?.qualities?.length || 0} Qualities Available</span>
-                  </div>
+                {/* Vertical 9:16 Video / Photo Preview Player */}
+                <div className="w-full rounded-2xl overflow-hidden bg-black border border-[#E8DCC4]/15 aspect-[9/15] max-h-[430px] relative flex items-center justify-center shadow-inner">
+                  {currentMedia.type === 'video' ? (
+                    <video
+                      key={currentMedia.previewUrl}
+                      src={currentMedia.previewUrl}
+                      poster={currentMedia.thumbnail}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <img
+                      src={currentMedia.previewUrl}
+                      alt="Instagram media preview"
+                      className="w-full h-full object-contain"
+                    />
+                  )}
                 </div>
 
-                {/* Right Column: All Qualities Download Matrix */}
-                <div className="lg:col-span-7 p-6 sm:p-7 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <span className="text-[11px] uppercase tracking-wider text-[#8B5CF6] font-semibold">
-                          Direct CDN Streams
-                        </span>
-                        <h4 className="text-lg font-bold text-[#E8DCC4]">
-                          All Available Reel &amp; Post Qualities
-                        </h4>
-                      </div>
-                      <span className="text-xs px-3 py-1 rounded-full bg-[#E8DCC4]/10 text-[#E8DCC4]/80">
-                        No Watermark
-                      </span>
-                    </div>
+                {/* DOWNLOAD (SERVER 1) BUTTON */}
+                <button
+                  type="button"
+                  onClick={() => handleServerDownload(currentMedia.server1Url, 1)}
+                  disabled={downloadingServer !== null}
+                  className="mt-4 w-full py-3.5 px-5 rounded-xl bg-[#8B5CF6] hover:bg-[#7c4dff] text-white font-bold text-xs sm:text-sm tracking-wider uppercase transition flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
+                >
+                  {downloadingServer === 1 ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>DOWNLOADING ({downloadProgress}%)...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      <span>DOWNLOAD (SERVER 1)</span>
+                    </>
+                  )}
+                </button>
 
-                    <div className="space-y-2.5">
-                      {currentMedia?.qualities?.map((q, idx) => {
-                        const isDownloading = downloadingId === q.id;
-                        const isCopied = copiedId === q.id;
+                {/* DOWNLOAD (SERVER 2) BUTTON */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleServerDownload(currentMedia.server2Url || currentMedia.server1Url, 2)
+                  }
+                  disabled={downloadingServer !== null}
+                  className="mt-2.5 w-full py-3.5 px-5 rounded-xl bg-[#E8DCC4] hover:bg-white text-[#1F3D2B] font-bold text-xs sm:text-sm tracking-wider uppercase transition flex items-center justify-center gap-2 shadow-md cursor-pointer disabled:opacity-60"
+                >
+                  {downloadingServer === 2 ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-[#8B5CF6]" />
+                      <span>STARTING DOWNLOAD...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 text-[#8B5CF6]" />
+                      <span>DOWNLOAD (SERVER 2)</span>
+                    </>
+                  )}
+                </button>
 
-                        return (
-                          <div
-                            key={q.id}
-                            className={`p-3.5 rounded-2xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                              idx === 0
-                                ? 'bg-[#264934] border-[#8B5CF6]/60'
-                                : 'bg-[#193223]/90 border-[#E8DCC4]/12 hover:border-[#E8DCC4]/30'
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs ${
-                                  idx === 0
-                                    ? 'bg-[#8B5CF6] text-white'
-                                    : 'bg-[#E8DCC4]/10 text-[#E8DCC4]'
-                                }`}
-                              >
-                                {q.ext === 'M4A' ? <Music className="w-4 h-4" /> : q.ext}
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold text-sm text-[#E8DCC4]">
-                                    {q.label}
-                                  </span>
-                                  {q.badge && (
-                                    <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-[#8B5CF6] text-white">
-                                      {q.badge}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-[#E8DCC4]/65 flex items-center gap-2 mt-0.5">
-                                  <span>{q.resolution}</span>
-                                  {q.bitrate && <span>• {q.bitrate}</span>}
-                                  <span>• {q.sizeEst}</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleCopyLink(q)}
-                                title="Copy Direct CDN Link"
-                                className="p-2.5 rounded-full bg-[#1F3D2B] hover:bg-[#E8DCC4]/15 text-[#E8DCC4]/80 hover:text-[#E8DCC4] border border-[#E8DCC4]/15 transition cursor-pointer"
-                              >
-                                {isCopied ? (
-                                  <Check className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                                ) : (
-                                  <Copy className="w-3.5 h-3.5" />
-                                )}
-                              </button>
-
-                              <a
-                                href={q.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title="Open stream in new tab"
-                                className="p-2.5 rounded-full bg-[#1F3D2B] hover:bg-[#E8DCC4]/15 text-[#E8DCC4]/80 hover:text-[#E8DCC4] border border-[#E8DCC4]/15 transition"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-
-                              <button
-                                type="button"
-                                onClick={() => handleDownloadFile(q)}
-                                disabled={isDownloading}
-                                className={`px-4 py-2 rounded-full font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer ${
-                                  idx === 0
-                                    ? 'bg-[#8B5CF6] hover:bg-[#7c4dff] text-white shadow-md'
-                                    : 'bg-[#E8DCC4] hover:bg-white text-[#1F3D2B]'
-                                }`}
-                              >
-                                {isDownloading ? (
-                                  <>
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    <span>{downloadProgress}%</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Download className="w-3.5 h-3.5" />
-                                    <span>Download</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
+                {/* Download Again Reset Link */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResult(null);
+                    setUrlInput('');
+                    setError('');
+                    extractorRef.current?.scrollIntoView({ behavior: 'smooth' });
+                    setTimeout(() => inputRef.current?.focus(), 300);
+                  }}
+                  className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[#E8DCC4]/80 hover:text-[#E8DCC4] underline underline-offset-4 transition cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-[#8B5CF6]" />
+                  <span>Download Again</span>
+                </button>
               </div>
             </div>
           )}
@@ -1019,11 +677,11 @@ export default function App() {
                   → Minimalist Workflow
                 </span>
                 <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-[#1F3D2B] mt-1">
-                  Built for pure Instagram archives.
+                  Steps to Download Reels From Instagram.
                 </h2>
               </div>
               <p className="text-sm text-[#1F3D2B]/75 max-w-md">
-                Every Reel and Carousel uploaded to Instagram is stored as a direct MP4 and high-resolution JPG on Instagram CDN nodes. We unlock every quality without watermarks.
+                Original quality without watermark or logo. Save Reels videos directly to your phone gallery or computer in seconds.
               </p>
             </div>
 
@@ -1033,9 +691,9 @@ export default function App() {
                   01
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-[#E8DCC4]">Copy Instagram Reel Link</h3>
+                  <h3 className="text-lg font-bold text-[#E8DCC4]">Copy Link of the Video</h3>
                   <p className="text-xs text-[#E8DCC4]/75 mt-2 leading-relaxed">
-                    Tap the Share icon on any public Instagram Reel, Video, or Photo Carousel and select Copy Link.
+                    Open Instagram, tap the Share icon on any public Reel or Video, and tap Copy Link.
                   </p>
                 </div>
               </div>
@@ -1045,9 +703,9 @@ export default function App() {
                   02
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-[#E8DCC4]">Inspect All Qualities</h3>
+                  <h3 className="text-lg font-bold text-[#E8DCC4]">Paste Link (Auto-Submit)</h3>
                   <p className="text-xs text-[#E8DCC4]/75 mt-2 leading-relaxed">
-                    Paste the URL above. Our engine extracts 1080p Full HD MP4 streams, M4A original audio, and all Carousel slides.
+                    Tap Paste link above. Our auto-submit engine fetches the HD video stream right away.
                   </p>
                 </div>
               </div>
@@ -1057,9 +715,9 @@ export default function App() {
                   03
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-[#E8DCC4]">Save Master File</h3>
+                  <h3 className="text-lg font-bold text-[#E8DCC4]">Tap Download (Server 1 or 2)</h3>
                   <p className="text-xs text-[#E8DCC4]/75 mt-2 leading-relaxed">
-                    Download the uncompressed MP4 or original photo directly to your phone or computer in one click.
+                    Save the original Full HD MP4 directly into your device Downloads or Gallery.
                   </p>
                 </div>
               </div>
@@ -1071,12 +729,12 @@ export default function App() {
             <div className="mt-14 pt-10 border-t border-[#1F3D2B]/15">
               <div className="flex items-center justify-between mb-4">
                 <span className="text-xs font-bold uppercase tracking-wider text-[#1F3D2B]/70">
-                  Recent Instagram Extractions
+                  Recent Instagram Downloads
                 </span>
                 <button
                   onClick={() => {
                     setHistory([]);
-                    localStorage.removeItem('instavault_history_v1');
+                    localStorage.removeItem('instavault_history_v2');
                   }}
                   className="text-xs text-[#1F3D2B]/60 hover:text-[#1F3D2B] flex items-center gap-1 cursor-pointer"
                 >
@@ -1090,7 +748,7 @@ export default function App() {
                     onClick={() => {
                       setResult(item);
                       setActiveSlideIndex(0);
-                      window.scrollTo({ top: 320, behavior: 'smooth' });
+                      resultSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }}
                     className="p-3 rounded-2xl bg-[#1F3D2B]/5 hover:bg-[#1F3D2B]/10 border border-[#1F3D2B]/15 text-left flex items-center gap-3 transition cursor-pointer"
                   >
@@ -1101,7 +759,7 @@ export default function App() {
                     />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-bold text-[#1F3D2B] truncate">
-                        @{item.authorHandle} · {item.postType}
+                        Reel #{item.shortcode}
                       </p>
                       <p className="text-[11px] text-[#1F3D2B]/70 truncate">{item.caption}</p>
                     </div>
@@ -1113,54 +771,6 @@ export default function App() {
           )}
         </div>
       </main>
-
-      {/* ================================================================= */}
-      {/* OPTIONAL PRODUCTION API KEY DRAWER                                */}
-      {/* ================================================================= */}
-      {showApiModal && (
-        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="max-w-md w-full rounded-3xl bg-[#1F3D2B] border border-[#E8DCC4]/20 p-6 text-[#E8DCC4] shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-[#E8DCC4]/15">
-              <div className="flex items-center gap-2">
-                <Settings2 className="w-4 h-4 text-[#8B5CF6]" />
-                <h3 className="font-bold text-sm">Extraction Engine Settings</h3>
-              </div>
-              <button
-                onClick={() => setShowApiModal(false)}
-                className="p-1 rounded-full hover:bg-[#E8DCC4]/10 text-[#E8DCC4]/70 hover:text-[#E8DCC4]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-[#E8DCC4]/75 mt-4 leading-relaxed">
-              Free Insta Video Downloader uses public Instagram Embed &amp; OpenGraph syndication nodes by default. For high-traffic commercial use, you can optionally paste a RapidAPI Instagram Downloader key below:
-            </p>
-
-            <div className="mt-4">
-              <label className="block text-[11px] uppercase tracking-wider text-[#8B5CF6] font-semibold mb-1.5">
-                Optional RapidAPI Key
-              </label>
-              <input
-                type="password"
-                value={customRapidApiKey}
-                onChange={(e) => saveApiKey(e.target.value)}
-                placeholder="Paste x-rapidapi-key (optional)..."
-                className="w-full rounded-xl bg-[#14291D] border border-[#E8DCC4]/20 px-3.5 py-2.5 text-xs text-[#E8DCC4] placeholder-[#E8DCC4]/40 focus:outline-none focus:border-[#8B5CF6]"
-              />
-            </div>
-
-            <div className="mt-5 flex justify-end">
-              <button
-                onClick={() => setShowApiModal(false)}
-                className="px-5 py-2 rounded-full bg-[#E8DCC4] text-[#1F3D2B] font-semibold text-xs cursor-pointer"
-              >
-                Save &amp; Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* MINIMAL FOOTER */}
       <footer className="bg-[#1F3D2B] text-[#E8DCC4]/70 border-t border-[#E8DCC4]/10 py-8 px-6 text-xs">
