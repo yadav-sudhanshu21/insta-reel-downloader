@@ -47,7 +47,6 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [downloadingServer, setDownloadingServer] = useState(null);
-  const [downloadProgress, setDownloadProgress] = useState(0);
   const [activeNav, setActiveNav] = useState('Reels HD');
   const [history, setHistory] = useState([]);
 
@@ -311,94 +310,28 @@ export default function App() {
   };
 
   // ==========================================================
-  // SERVER 1 & SERVER 2 DIRECT DOWNLOAD HANDLERS
+  // DIRECT DOWNLOAD HANDLER (USES WORKING SERVER 2 LOGIC)
   // ==========================================================
-  const handleServerDownload = async (targetStreamUrl, serverNumber) => {
+  const handleServerDownload = (targetStreamUrl) => {
     if (!targetStreamUrl) return;
-    setDownloadingServer(serverNumber);
-    setDownloadProgress(25);
+    setDownloadingServer(true);
 
     const ext = currentMedia?.type === 'photo' ? 'jpg' : 'mp4';
-    const cleanFileName = `Instagram_Reel_${result?.shortcode || 'video'}_Server${serverNumber}.${ext}`;
+    const cleanFileName = `Instagram_Reel_${result?.shortcode || 'video'}.${ext}`;
 
-    // SERVER 2: Direct CDN Stream / Proxy Download Endpoint (Instant Browser File Save)
-    if (serverNumber === 2) {
-      const directProxyHref = `/api/instagram?downloadUrl=${encodeURIComponent(
-        targetStreamUrl
-      )}&filename=${encodeURIComponent(cleanFileName)}`;
-      const a = document.createElement('a');
-      a.href = directProxyHref;
-      a.download = cleanFileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+    const directProxyHref = `/api/instagram?downloadUrl=${encodeURIComponent(
+      targetStreamUrl
+    )}&filename=${encodeURIComponent(cleanFileName)}`;
+    const a = document.createElement('a');
+    a.href = directProxyHref;
+    a.download = cleanFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 
-      setTimeout(() => {
-        setDownloadingServer(null);
-        setDownloadProgress(0);
-      }, 800);
-      return;
-    }
-
-    // SERVER 1: Fetch Binary Stream & Save Directly into Device Gallery / Downloads
-    try {
-      const proxyDownloadUrl = `/api/instagram?downloadUrl=${encodeURIComponent(
-        targetStreamUrl
-      )}&filename=${encodeURIComponent(cleanFileName)}`;
-
-      let response = await fetch(proxyDownloadUrl);
-      if (!response.ok || response.headers.get('content-type')?.includes('text/html')) {
-        response = await fetch(targetStreamUrl);
-      }
-
-      if (!response || !response.ok) throw new Error('Direct link fallback');
-
-      const contentLength = response.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : 0;
-      let loaded = 0;
-
-      const reader = response.body.getReader();
-      const chunks = [];
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        loaded += value.length;
-        if (total) {
-          setDownloadProgress(Math.min(96, Math.round((loaded / total) * 100)));
-        } else {
-          setDownloadProgress((prev) => Math.min(90, prev + 15));
-        }
-      }
-
-      const blob = new Blob(chunks, {
-        type: ext === 'mp4' ? 'video/mp4' : 'image/jpeg'
-      });
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = cleanFileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-      setDownloadProgress(100);
-    } catch (err) {
-      // Fallback to direct download anchor
-      window.open(
-        `/api/instagram?downloadUrl=${encodeURIComponent(targetStreamUrl)}&filename=${encodeURIComponent(
-          cleanFileName
-        )}`,
-        '_blank',
-        'noopener,noreferrer'
-      );
-    } finally {
-      setTimeout(() => {
-        setDownloadingServer(null);
-        setDownloadProgress(0);
-      }, 600);
-    }
+    setTimeout(() => {
+      setDownloadingServer(null);
+    }, 800);
   };
 
   const currentMedia =
@@ -608,44 +541,24 @@ export default function App() {
                   )}
                 </div>
 
-                {/* DOWNLOAD (SERVER 1) BUTTON */}
-                <button
-                  type="button"
-                  onClick={() => handleServerDownload(currentMedia.server1Url, 1)}
-                  disabled={downloadingServer !== null}
-                  className="mt-4 w-full py-3.5 px-5 rounded-xl bg-[#8B5CF6] hover:bg-[#7c4dff] text-white font-bold text-xs sm:text-sm tracking-wider uppercase transition flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
-                >
-                  {downloadingServer === 1 ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>DOWNLOADING ({downloadProgress}%)...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4" />
-                      <span>DOWNLOAD (SERVER 1)</span>
-                    </>
-                  )}
-                </button>
-
-                {/* DOWNLOAD (SERVER 2) BUTTON */}
+                {/* SINGLE CLEAN DOWNLOAD BUTTON (POWERED BY SERVER 2 LOGIC) */}
                 <button
                   type="button"
                   onClick={() =>
-                    handleServerDownload(currentMedia.server2Url || currentMedia.server1Url, 2)
+                    handleServerDownload(currentMedia.server2Url || currentMedia.server1Url)
                   }
                   disabled={downloadingServer !== null}
-                  className="mt-2.5 w-full py-3.5 px-5 rounded-xl bg-[#E8DCC4] hover:bg-white text-[#1F3D2B] font-bold text-xs sm:text-sm tracking-wider uppercase transition flex items-center justify-center gap-2 shadow-md cursor-pointer disabled:opacity-60"
+                  className="mt-4 w-full py-3.5 px-5 rounded-xl bg-[#8B5CF6] hover:bg-[#7c4dff] text-white font-bold text-xs sm:text-sm tracking-wider uppercase transition flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
                 >
-                  {downloadingServer === 2 ? (
+                  {downloadingServer ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin text-[#8B5CF6]" />
+                      <Loader2 className="w-4 h-4 animate-spin" />
                       <span>STARTING DOWNLOAD...</span>
                     </>
                   ) : (
                     <>
-                      <Download className="w-4 h-4 text-[#8B5CF6]" />
-                      <span>DOWNLOAD (SERVER 2)</span>
+                      <Download className="w-4 h-4" />
+                      <span>DOWNLOAD</span>
                     </>
                   )}
                 </button>
@@ -715,7 +628,7 @@ export default function App() {
                   03
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-[#E8DCC4]">Tap Download (Server 1 or 2)</h3>
+                  <h3 className="text-lg font-bold text-[#E8DCC4]">Tap Download</h3>
                   <p className="text-xs text-[#E8DCC4]/75 mt-2 leading-relaxed">
                     Save the original Full HD MP4 directly into your device Downloads or Gallery.
                   </p>
