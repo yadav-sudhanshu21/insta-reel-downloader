@@ -27,7 +27,7 @@ function parseInstagramUrl(input) {
 
   // Match standard Instagram URLs: /reel/, /reels/, /p/, /tv/
   const regex =
-    /(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am|ddinstagram\.com|vxinstagram\.com)\/(?:[A-Za-z0-9_.]+\/)?(reel|reels|p|tv)\/([A-Za-z0-9_-]{5,25})/i;
+    /(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am|vxinstagram\.com)\/(?:[A-Za-z0-9_.]+\/)?(reel|reels|p|tv)\/([A-Za-z0-9_-]{5,25})/i;
   const match = trimmed.match(regex);
   if (match) {
     const rawType = match[1].toLowerCase();
@@ -181,7 +181,52 @@ export default function App() {
   const fetchLiveInstagramMedia = async (parsed) => {
     const { shortcode, type, cleanUrl } = parsed;
 
-    // 1. Optional RapidAPI Instagram Downloader (if user configured their key)
+    // 1. PRIMARY ENGINE: Call Your Own Vercel Serverless Backend (/api/instagram)
+    try {
+      const apiRes = await fetch(
+        `/api/instagram?shortcode=${encodeURIComponent(shortcode)}&type=${encodeURIComponent(type)}`
+      );
+      if (apiRes.ok) {
+        const data = await apiRes.json();
+        if (data && data.status === 'ok' && Array.isArray(data.items) && data.items.length > 0) {
+          const mediaItems = data.items.map((item, idx) => {
+            const isVid = item.type === 'video';
+            const streamUrl = isVid ? item.videoUrl : item.imageUrl;
+            return {
+              index: idx,
+              type: isVid ? 'video' : 'photo',
+              isEmbedFallback: false,
+              thumbnail: item.thumbnail || streamUrl,
+              previewUrl: streamUrl,
+              qualities: buildInstagramQualities(
+                streamUrl,
+                isVid ? 'video' : 'photo',
+                idx,
+                item.width,
+                item.height
+              )
+            };
+          });
+
+          return {
+            shortcode,
+            postType: mediaItems.length > 1 ? 'CAROUSEL' : type.toUpperCase(),
+            authorName: data.authorName || `@${data.authorHandle}`,
+            authorHandle: data.authorHandle || 'instagram_creator',
+            authorAvatar:
+              data.authorAvatar ||
+              mediaItems[0]?.thumbnail ||
+              'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120&auto=format&fit=crop&q=80',
+            caption: data.caption || `Instagram ${type.toUpperCase()} (#${shortcode})`,
+            mediaItems
+          };
+        }
+      }
+    } catch (e) {
+      // If running locally without `vercel dev`, continue to client-side nodes
+    }
+
+    // 2. Optional RapidAPI Instagram Downloader (if user configured their key)
     if (customRapidApiKey.trim()) {
       try {
         const rapidRes = await fetch(
@@ -231,9 +276,9 @@ export default function App() {
       }
     }
 
-    // 2. Multi-Proxy Extraction across Instagram Captioned Embed & DDInstagram
+    // 3. Multi-Proxy Extraction across Instagram Captioned Embed & VXInstagram
     const embedCaptionedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
-    const ddUrl = `https://www.ddinstagram.com/${type}/${shortcode}`;
+    const vxUrl = `https://www.vxinstagram.com/${type}/${shortcode}`;
 
     const fetchTextWithTimeout = async (url, timeoutMs = 6500) => {
       const controller = new AbortController();
@@ -252,8 +297,8 @@ export default function App() {
     const proxyPromises = [
       fetchTextWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(embedCaptionedUrl)}`),
       fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(embedCaptionedUrl)}`),
-      fetchTextWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(ddUrl)}`),
-      fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(ddUrl)}`)
+      fetchTextWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(vxUrl)}`),
+      fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(vxUrl)}`)
     ];
 
     const responses = await Promise.allSettled(proxyPromises);
@@ -261,36 +306,50 @@ export default function App() {
       .filter((r) => r.status === 'fulfilled' && r.value && r.value.length > 200)
       .map((r) => r.value);
 
+    const decodeEscapes = (str) =>
+      str
+        .replace(/\\u0026/g, '&')
+        .replace(/\\u0025/g, '%')
+        .replace(/\\\//g, '/')
+        .replace(/&amp;/g, '&');
+
     for (const html of htmlPayloads) {
-      const videoMatches = [...html.matchAll(/"video_url":"([^"]+)"/g)].map((m) =>
-        m[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/')
-      );
-      const imageMatches = [...html.matchAll(/"display_url":"([^"]+)"/g)].map((m) =>
-        m[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/')
-      );
+      const videoMatches = [];
+      const imageMatches = [];
+
+      for (const m of html.matchAll(/"video_url"\s*:\s*"([^"]+)"/g)) {
+        videoMatches.push(decodeEscapes(m[1]));
+      }
+      for (const m of html.matchAll(/\\?"video_url\\?"\s*:\s*\\?"([^"\\]+)\\?"/g)) {
+        videoMatches.push(decodeEscapes(m[1]));
+      }
+      for (const m of html.matchAll(/"display_url"\s*:\s*"([^"]+)"/g)) {
+        imageMatches.push(decodeEscapes(m[1]));
+      }
 
       const ogVideo =
         html.match(/property="og:video(?::secure_url)?"\s+content="([^"]+)"/i) ||
         html.match(/content="([^"]+)"\s+property="og:video(?::secure_url)?"/i);
       if (ogVideo?.[1]) {
-        const rawVid = ogVideo[1].replace(/&amp;/g, '&');
-        videoMatches.push(rawVid.startsWith('http') ? rawVid : `https://www.ddinstagram.com${rawVid}`);
+        const rawVid = decodeEscapes(ogVideo[1]);
+        if (rawVid.startsWith('http')) videoMatches.push(rawVid);
       }
 
       const ogImage =
         html.match(/property="og:image"\s+content="([^"]+)"/i) ||
         html.match(/content="([^"]+)"\s+property="og:image"/i);
       if (ogImage?.[1]) {
-        imageMatches.push(ogImage[1].replace(/&amp;/g, '&'));
+        const rawImg = decodeEscapes(ogImage[1]);
+        if (rawImg.startsWith('http')) imageMatches.push(rawImg);
       }
 
       const embedImgMatch = html.match(/class="EmbeddedMediaImage"[^>]+src="([^"]+)"/);
       if (embedImgMatch?.[1]) {
-        imageMatches.push(embedImgMatch[1].replace(/&amp;/g, '&'));
+        imageMatches.push(decodeEscapes(embedImgMatch[1]));
       }
 
-      const uniqueVideos = [...new Set(videoMatches)];
-      const uniqueImages = [...new Set(imageMatches)];
+      const uniqueVideos = [...new Set(videoMatches)].filter((u) => u.startsWith('http'));
+      const uniqueImages = [...new Set(imageMatches)].filter((u) => u.startsWith('http'));
 
       if (uniqueVideos.length > 0 || uniqueImages.length > 0) {
         const usernameMatch =
@@ -337,61 +396,9 @@ export default function App() {
       }
     }
 
-    // 3. Guaranteed Fallback: Interactive Instagram Embed Stream + Direct Save Mirror Links
-    const directMirrorStream = `https://www.ddinstagram.com/videos/${shortcode}/1`;
-    const highResThumb = `https://www.instagram.com/p/${shortcode}/media/?size=l`;
-
-    return {
-      shortcode,
-      postType: type.toUpperCase(),
-      authorName: 'Instagram Reel / Post',
-      authorHandle: shortcode,
-      authorAvatar:
-        'https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?w=120&auto=format&fit=crop&q=80',
-      caption: `Instagram ${type.toUpperCase()} (${cleanUrl})`,
-      mediaItems: [
-        {
-          index: 0,
-          type: 'video',
-          isEmbedFallback: true,
-          embedIframeUrl: `https://www.instagram.com/p/${shortcode}/embed/`,
-          thumbnail: highResThumb,
-          previewUrl: directMirrorStream,
-          qualities: [
-            {
-              id: `ig-vid-0-1080p`,
-              label: '1080p Full HD Reel (Mirror 1)',
-              resolution: '1080x1920',
-              bitrate: 'Max Bitrate',
-              ext: 'MP4',
-              sizeEst: 'Direct Stream',
-              badge: 'MAX BITRATE',
-              url: directMirrorStream
-            },
-            {
-              id: `ig-img-0-orig`,
-              label: 'Original High-Res Cover / Photo',
-              resolution: '1080px ORIG',
-              bitrate: 'Lossless',
-              ext: 'JPG',
-              sizeEst: 'Original Image',
-              badge: 'ORIG PHOTO',
-              url: highResThumb
-            },
-            {
-              id: `ig-vid-0-720p`,
-              label: 'Open Direct Instagram Post Stream',
-              resolution: 'Original Source',
-              bitrate: 'HD',
-              ext: 'MP4',
-              sizeEst: 'Source Link',
-              badge: 'DIRECT',
-              url: cleanUrl
-            }
-          ]
-        }
-      ]
-    };
+    throw new Error(
+      'Unable to extract direct MP4 stream. Make sure you added the api/instagram.js file to your Vercel project or that the Reel is public.'
+    );
   };
 
   const handleExtract = async (e, customUrl) => {
@@ -441,14 +448,23 @@ export default function App() {
 
   const handleDownloadFile = async (qualityItem) => {
     setDownloadingId(qualityItem.id);
-    setDownloadProgress(15);
+    setDownloadProgress(20);
+
+    const cleanFileName = `FreeInstaVideo_${result?.authorHandle || 'reel'}_${
+      result?.shortcode || 'media'
+    }.${qualityItem.ext.toLowerCase()}`;
 
     try {
-      let response;
-      try {
-        response = await fetch(qualityItem.url, { mode: 'cors' });
-        if (!response.ok) throw new Error('Direct CORS blocked');
-      } catch (corsErr) {
+      // 1. First try downloading via our own Vercel Serverless Proxy (/api/instagram?downloadUrl=...)
+      // This bypasses browser CORS and forces an instant file save
+      const proxyDownloadUrl = `/api/instagram?downloadUrl=${encodeURIComponent(
+        qualityItem.url
+      )}&filename=${encodeURIComponent(cleanFileName)}`;
+
+      let response = await fetch(proxyDownloadUrl);
+
+      // If /api/instagram isn't deployed locally, try corsproxy
+      if (!response.ok || response.headers.get('content-type')?.includes('text/html')) {
         response = await fetch(
           `https://corsproxy.io/?${encodeURIComponent(qualityItem.url)}`
         );
@@ -486,7 +502,7 @@ export default function App() {
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = `FreeInstaVideo_${result?.authorHandle || 'reel'}_${result?.shortcode || 'media'}.${qualityItem.ext.toLowerCase()}`;
+      a.download = cleanFileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
